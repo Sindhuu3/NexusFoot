@@ -1,12 +1,11 @@
-from flask import Flask, render_template, request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import tensorflow as tf
 import numpy as np
 import cv2
 import os
 import json
 from PIL import Image
-import matplotlib
-matplotlib.use("Agg")  # REQUIRED for cloud
 
 from gradcam import grad_cam_densenet, detect_orientation
 from utils import preprocess_image
@@ -18,6 +17,7 @@ UPLOAD_FOLDER = "static/outputs"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
+CORS(app)  # allow frontend → backend calls
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # ---------------- LOAD MODEL ----------------
@@ -26,58 +26,69 @@ model = tf.keras.models.load_model(
     compile=False
 )
 
-
 with open("class_map.json") as f:
     class_map = json.load(f)
 
 # ---------------- ROUTES ----------------
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        file = request.files["image"]
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    if "image" not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
 
-        if file:
-            image = Image.open(file).convert("RGB")
-            img_arr = preprocess_image(image, IMG_SIZE)
+    file = request.files["image"]
 
-            # Prediction
-            preds = model.predict(img_arr, verbose=0)[0]
-            grade_idx = int(np.argmax(preds))
-            grade = grade_idx + 1
-            confidence = preds[grade_idx] * 100
+    if file.filename == "":
+        return jsonify({"error": "Empty filename"}), 400
 
-            # Grad-CAM
-            heatmap = grad_cam_densenet(model, img_arr)
-            orientation = detect_orientation(heatmap)
+    # -------- Load Image --------
+    image = Image.open(file).convert("RGB")
+    img_arr = preprocess_image(image, IMG_SIZE)
 
-            heatmap = cv2.resize(heatmap, IMG_SIZE)
-            heatmap_col = cv2.applyColorMap(
-                np.uint8(255 * heatmap),
-                cv2.COLORMAP_JET
-            )
+    # -------- Prediction --------
+    raw_preds = model.predict(img_arr, verbose=0)
 
-            overlay = heatmap_col * 0.4 + np.array(image.resize(IMG_SIZE))
+    # 🔥 handle multi-output models
+    preds = raw_preds[0] if isinstance(raw_preds, list) else raw_preds[0]
 
-            output_path = os.path.join(
-                UPLOAD_FOLDER, "gradcam_result.png"
-            )
-            cv2.imwrite(
-                output_path,
-                cv2.cvtColor(overlay.astype("uint8"), cv2.COLOR_RGB2BGR)
-            )
+    class_idx = int(np.argmax(preds))
+    grade = class_idx + 1
+    confidence = float(preds[class_idx] * 100)
 
-            return render_template(
-                "index.html",
-                grade=grade,
-                confidence=f"{confidence:.2f}",
-                orientation=orientation,
-                image_path=output_path
-            )
+    # -------- Grad-CAM --------
+    heatmap = grad_cam_densenet(model, img_arr, class_idx)
+    orientation = detect_orientation(heatmap)
 
-    return render_template("index.html")
+    heatmap = cv2.resize(heatmap, IMG_SIZE)
+    heatmap_col = cv2.applyColorMap(
+        np.uint8(255 * heatmap),
+        cv2.COLORMAP_JET
+    )
+
+    overlay = (
+        heatmap_col * 0.4
+        + np.array(image.resize(IMG_SIZE))
+    )
+
+    output_path = os.path.join(
+        UPLOAD_FOLDER, "gradcam_result.png"
+    )
+
+    cv2.imwrite(
+        output_path,
+        cv2.cvtColor(
+            overlay.astype("uint8"),
+            cv2.COLOR_RGB2BGR
+        )
+    )
+
+    # -------- Response --------
+    return jsonify({
+        "grade": grade,
+        "confidence": round(confidence, 2),
+        "orientation": orientation,
+        "gradcam_image": output_path
+    })
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
-
-
+    app.run(host="0.0.0.0", port=10000, debug=True)
