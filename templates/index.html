@@ -1,21 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>DFU Grade Prediction</title>
+<meta charset="UTF-8">
+<title>CURIS - AI Health Assessment</title>
+
+<style>
+body{font-family:system-ui;background:#f9fafb;margin:0}
+.hidden{display:none}
+button{padding:12px 20px;border:none;border-radius:8px;cursor:pointer}
+.main{max-width:900px;margin:auto;padding:40px;text-align:center}
+img{max-width:300px;border-radius:10px;margin:10px}
+</style>
 </head>
+
 <body>
-    <h2>🦶 Diabetic Foot Ulcer Grading</h2>
 
-    <form method="POST" enctype="multipart/form-data">
-        <input type="file" name="image" required>
-        <button type="submit">Predict</button>
-    </form>
+<div class="main" id="home-view">
+    <h1>CURIS – AI Diabetic Foot Risk</h1>
+    <p>Upload a foot image for AI analysis</p>
+    <button onclick="start()">Get Started</button>
+</div>
 
-    {% if grade %}
-        <h3>🩺 Grade: {{ grade }}</h3>
-        <h4>📊 Confidence: {{ confidence }}%</h4>
-        <h4>📍 Spread Direction: {{ orientation }}</h4>
-        <img src="{{ image_path }}" width="350">
-    {% endif %}
+<div class="main hidden" id="upload-view">
+    <h2>Upload Image</h2>
+    <input type="file" id="fileInput" accept="image/*" onchange="preview(event)">
+    <br>
+    <img id="previewImg" style="display:none">
+    <br>
+    <button onclick="analyze()">Analyze</button>
+</div>
+
+<div class="main hidden" id="result-view">
+    <h2>Result</h2>
+
+    <h3>Uploaded Image</h3>
+    <img id="uploaded-img">
+
+    <h3>Grad-CAM</h3>
+    <img id="gradcam-img">
+
+    <p><b>Grade:</b> <span id="grade"></span></p>
+    <p><b>Confidence:</b> <span id="confidence"></span>%</p>
+    <p><b>Orientation:</b> <span id="orientation"></span></p>
+
+    <button onclick="start()">Analyze Another</button>
+</div>
+
+<script>
+function start(){
+    home.classList.add("hidden")
+    upload.classList.remove("hidden")
+    result.classList.add("hidden")
+}
+
+function preview(e){
+    const file = e.target.files[0]
+    if(!file) return
+    const r = new FileReader()
+    r.onload = () => {
+        previewImg.src = r.result
+        previewImg.style.display = "block"
+    }
+    r.readAsDataURL(file)
+}
+
+function analyze(){
+    if(!fileInput.files.length){
+        alert("Select image")
+        return
+    }
+
+    const formData = new FormData()
+    formData.append("image", fileInput.files[0])
+
+    fetch("/analyze", {
+        method: "POST",
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        uploadedImg.src = previewImg.src
+        gradcamImg.src = "/" + data.gradcam_image
+        grade.innerText = data.grade
+        confidence.innerText = data.confidence
+        orientation.innerText = data.orientation
+
+        upload.classList.add("hidden")
+        result.classList.remove("hidden")
+    })
+    .catch(() => alert("Server error"))
+}
+
+const home = document.getElementById("home-view")
+const upload = document.getElementById("upload-view")
+const result = document.getElementById("result-view")
+const fileInput = document.getElementById("fileInput")
+const previewImg = document.getElementById("previewImg")
+const uploadedImg = document.getElementById("uploaded-img")
+const gradcamImg = document.getElementById("gradcam-img")
+</script>
+
 </body>
 </html>
